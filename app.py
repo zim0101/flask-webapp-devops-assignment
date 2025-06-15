@@ -36,7 +36,7 @@ def get_commit_hash():
 @app.route('/')
 def home():
     return jsonify({
-        "message": "Hello from Flask Web App!",
+        "message": "DevOps Problem 1",
         "hostname": socket.gethostname(),
         "vm_ip": get_vm_ip(),
         "commit_hash": get_commit_hash(),
@@ -56,4 +56,6 @@ if __name__ == '__main__':
     print(f"Starting Flask app on {socket.gethostname()}")
     print(f"VM IP: {get_vm_ip()}")
     print(f"Commit Hash: {get_commit_hash()}")
+    
     app.run(host='0.0.0.0', port=3000, debug=False)
+
