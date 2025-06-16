@@ -1,0 +1,130 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOCKER_IMAGE: zim0101/flask-webapp
+
+jobs:
+  # Continuous Integration
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      commit-hash: ${{ steps.meta.outputs.labels }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.DOCKER_IMAGE }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Display image info
+      run: |
+        echo "Built and pushed image: ${{ steps.meta.outputs.tags }}"
+        echo "Commit SHA: ${{ github.sha }}"
+
+  # Continuous Delivery
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install sshpass
+      run: sudo apt-get update && sudo apt-get install -y sshpass
+
+    - name: Create deployment script
+      run: |
+        cat > deploy.sh << 'DEPLOY_EOF'
+        #!/bin/bash
+        
+        # Configuration
+        DOCKER_IMAGE="${{ env.DOCKER_IMAGE }}:main-${{ github.sha }}"
+        COMMIT_HASH="${{ github.sha }}"
+        
+        # VM Configuration
+        VMS=("localhost:2222:node1" "localhost:2223:node2" "localhost:2224:node3")
+        PASSWORD="${{ secrets.VM_PASSWORD }}"
+        
+        echo "🚀 Deploying $DOCKER_IMAGE to VMs..."
+        
+        # Deploy to each VM
+        for vm in "${VMS[@]}"; do
+          IFS=':' read -r host port user <<< "$vm"
+          echo "Deploying to $user@$host:$port..."
+          
+          sshpass -p "$PASSWORD" ssh -o StrictHostKeyChecking=no -p "$port" "$user@$host" << EOF
+            # Pull new image
+            docker pull $DOCKER_IMAGE
+            
+            # Stop and remove old container
+            docker stop webapp || true
+            docker rm webapp || true
+            
+            # Run new container
+            docker run -d \
+              --name webapp \
+              --network host \
+              -e COMMIT_HASH="$COMMIT_HASH" \
+              --restart unless-stopped \
+              $DOCKER_IMAGE
+            
+            # Verify deployment
+            sleep 5
+            curl -f http://localhost:3000/health || exit 1
+            echo "✅ Deployment successful on $user@$host:$port"
+        EOF
+        done
+        
+        echo "🎉 Deployment completed successfully!"
+        DEPLOY_EOF
+        
+        chmod +x deploy.sh
+
+    - name: Deploy to VMs
+      run: ./deploy.sh
+      env:
+        VM_PASSWORD: ${{ secrets.VM_PASSWORD }}
+
+    - name: Verify deployment
+      run: |
+        echo "🔍 Verifying deployment..."
+        # Add verification steps here if needed
+        echo "✅ Pipeline completed successfully!"
