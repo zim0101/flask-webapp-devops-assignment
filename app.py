@@ -15,7 +15,7 @@ def get_commit_hash():
 @app.route('/')
 def home():
     return jsonify({
-        "message": "DevOps Problem 1",
+        "message": "DevOps Problem 1 - v1.0",
         "vm_hostname": get_vm_hostname(),
         "commit_hash": get_commit_hash(),
     })
